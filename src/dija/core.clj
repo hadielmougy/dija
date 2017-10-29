@@ -4,23 +4,23 @@
            Delayed
            TimeUnit)))
 
-(def repo (atom {}))
-(def delay (DelayQueue.))
 
-(defprotocol TimedEntry
+
+
+(defprotocol ITimedEntry
   (time [this])
   (data [this]))
 
+(defprotocol IBag
+  (clear [this])
+  (add! [this k v ops])
+  (get* [this k])
+  (remove* [this k]))
 
-
-
-(defn- remaining [unit time]
-  (let [remaining_millis (- time (System/currentTimeMillis))]
-    (.convert unit remaining_millis (TimeUnit/MILLISECONDS))))
 
 
 (deftype DelayedEntry [t d]
-  TimedEntry
+  ITimedEntry
   (time [this] t)
   (data [this] d)
   Delayed
@@ -30,31 +30,43 @@
     (- t (time delayed))))
 
 
-
-(defn add! [k v & {:keys [ttl callback] :or {ttl 10} :as ops}]
-  (let [time' (+
-               (System/currentTimeMillis)
-               (* ttl 1000))]
-    (.offer delay (DelayedEntry. time' k))
-    (swap! repo assoc k v)))
-
-
-(defn remove* [k]
-  (let [itr-seq (iterator-seq (.iterator delay))]
-    (doseq [d itr-seq]
-      (when (= (data d) k)
-        (.remove delay d)))
-    (swap! repo dissoc k)))   
+(deftype BagImpl [exe delay repo]
+  IBag
+  (add! [this k v {:keys [ttl listener] :or {ttl 10} :as ops}]
+    (let [time' (+
+                 (System/currentTimeMillis)
+                 (* ttl 1000))]
+      (.offer delay (DelayedEntry. time' k))
+      (swap! repo assoc k v)))
 
   
-(defn get* [k]
-  (get @repo k))
+  (get* [this k]
+    (get @repo k))
 
-(defn- consume []
-  (loop []
-    (let [d (data (.take delay))]
-      (swap! repo dissoc d)
-      (recur))))
+  
+  (remove* [this k]
+    (let [itr-seq (iterator-seq (.iterator delay))]
+      (doseq [d itr-seq]
+        (when (= (data d) k)
+          (.remove delay d)))
+      (swap! repo dissoc k))))
 
-(def consumer (Thread. consume))
-(.start consumer)
+
+(defn- remaining [unit time]
+  (let [remaining_millis (- time (System/currentTimeMillis))]
+    (.convert unit remaining_millis (TimeUnit/MILLISECONDS))))
+
+(defn- consume [q a]
+  (fn []
+    (loop []
+      (let [d (data (.take q))]
+        (swap! a dissoc d)
+        (recur)))))
+
+
+(defn bag []
+  (let [a (atom {})
+        q (DelayQueue.)
+        t (Thread. (consume q a))]
+    (.start t)
+    (BagImpl. nil q a)))
