@@ -1,5 +1,5 @@
 (ns dija.core
-  (import (java.util.concurrent
+  (:import (java.util.concurrent
            DelayQueue
            Delayed
            TimeUnit)))
@@ -16,6 +16,10 @@
   (add! [this k v ops])
   (get* [this k])
   (remove* [this k]))
+
+(defn-  remaining [unit time]
+  (let [remaining_millis (- time (System/currentTimeMillis))]
+    (.convert unit remaining_millis (TimeUnit/MILLISECONDS))))
 
 
 
@@ -51,10 +55,6 @@
           (.remove delay d)))
       (swap! repo dissoc k))))
 
-
-(defn- remaining [unit time]
-  (let [remaining_millis (- time (System/currentTimeMillis))]
-    (.convert unit remaining_millis (TimeUnit/MILLISECONDS))))
 
 (defn- consume [q a]
   (fn []
