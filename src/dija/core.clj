@@ -6,10 +6,17 @@
 
 
 
-
 (defprotocol ITimedEntry
-  (time [this])
-  (data [this]))
+  (time* [this])
+  (data* [this]))
+
+(defn- consumer [q a]
+  (fn []
+    (loop []
+      (let [d (data* (.take q))]
+        (swap! a dissoc d)
+        (recur)))))
+
 
 (defprotocol IBag
   (clear [this])
@@ -25,48 +32,54 @@
 
 (deftype DelayedEntry [t d]
   ITimedEntry
-  (time [this] t)
-  (data [this] d)
+  (time* [this] t)
+  (data* [this] d)
   Delayed
   (getDelay [this time_unit]
     (remaining time_unit t))
   (compareTo [this delayed]
-    (- t (time delayed))))
+    (- t (time* delayed))))
 
 
-(deftype BagImpl [exe delay repo]
+
+(defn- start-if-needed [started? delay-queue repo]
+  ; race condition could happen here. lock could be used here
+  (if (not @started?)
+    (let [t (Thread. (consumer delay-queue repo))]
+      (.start t)
+      (swap! started? not))))
+
+
+(deftype BagImpl [started? delay repo]
   IBag
   (add! [this k v {:keys [ttl listener] :or {ttl 10} :as ops}]
+    (start-if-needed started? delay repo)
     (let [time' (+
-                 (System/currentTimeMillis)
-                 (* ttl 1000))]
+                  (System/currentTimeMillis)
+                  (* ttl 1000))]
       (.offer delay (DelayedEntry. time' k))
       (swap! repo assoc k v)))
 
-  
+
   (get* [this k]
     (get @repo k))
 
-  
+
   (remove* [this k]
     (let [itr-seq (iterator-seq (.iterator delay))]
       (doseq [d itr-seq]
-        (when (= (data d) k)
+        (when (= (data* d) k)
           (.remove delay d)))
-      (swap! repo dissoc k))))
+      (swap! repo dissoc k)))
 
 
-(defn- consume [q a]
-  (fn []
-    (loop []
-      (let [d (data (.take q))]
-        (swap! a dissoc d)
-        (recur)))))
+  (clear [this]
+    (reset! repo {})))
+
 
 
 (defn bag []
   (let [a (atom {})
         q (DelayQueue.)
-        t (Thread. (consume q a))]
-    (.start t)
-    (BagImpl. nil q a)))
+        started? (atom false)]
+    (BagImpl. started? q a)))
